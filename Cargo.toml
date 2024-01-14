@@ -6,3 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+lrv-pac = { path = "./pac/lrv-pac", optional = true }
+qemu-pac = { path = "./pac/qemu-pac", optional = true }
+embedded-hal = "=1.0.0-alpha.4"
+nb = "1.0.0"
+
+[features]
+board_qemu = ["qemu-pac"]
+board_lrv = ["lrv-pac"]
