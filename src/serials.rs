@@ -411,26 +411,26 @@ impl AsyncSerial {
 
     fn set_divisor(&self, clock: usize, baud_rate: usize) {
         let block = self.hardware();
-        // let divisor = clock / (16 * baud_rate);
+        let divisor = clock / (16 * baud_rate);
         block.lcr().write(|w| w.dlab().set_bit());
-        #[cfg(feature = "board_lrv")]
-        {
-            block
-                .dll()
-                .write(|w| unsafe { w.bits((divisor & 0b1111_1111) as u32) });
-            block
-                .dlh()
-                .write(|w| unsafe { w.bits(((divisor >> 8) & 0b1111_1111) as u32) });
-        }
-        #[cfg(feature = "board_qemu")]
-        {
+        // #[cfg(feature = "board_lrv")]
+        // {
+        //     block
+        //         .dll()
+        //         .write(|w| unsafe { w.bits((divisor & 0b1111_1111) as u32) });
+        //     block
+        //         .dlh()
+        //         .write(|w| unsafe { w.bits(((divisor >> 8) & 0b1111_1111) as u32) });
+        // }
+        // #[cfg(feature = "board_qemu")]
+        // {
             block
                 .dll()
                 .write(|w| unsafe { w.bits((divisor & 0b1111_1111) as u8) });
             block
                 .dlh()
                 .write(|w| unsafe { w.bits(((divisor >> 8) & 0b1111_1111) as u8) });
-        }
+        // }
 
         block.lcr().write(|w| w.dlab().clear_bit());
     }
