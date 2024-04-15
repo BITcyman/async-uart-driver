@@ -9,6 +9,10 @@ edition = "2021"
 qemu-16550-pac = { git = "https://github.com/BITcyman/qemu-16550-pac"}
 embedded-hal = "=1.0.0-alpha.4"
 heapless = "0.7.5"
+
+ats-intc= { path = "../ats-intc" }
+# ats-intc = { git = "https://github.com/ATS-INTC/ats-intc" branch="axu15eg"}
+
 spin = { version = "0.9", features = ["use_ticket_mutex"] }
 
 nb = "1.0.0"
