@@ -372,8 +372,8 @@ pub struct AsyncSerial {
     pub(super) rx_intr_enabled: AtomicBool,
     pub(super) tx_intr_enabled: AtomicBool,
     prev_cts: AtomicBool,
-    read_waker: Mutex<Option<Waker>>,
-    write_waker: Mutex<Option<Waker>>,
+    read_wakers: Mutex<VecDeque<Waker>>,
+    write_wakers: Mutex<VecDeque<Waker>>,
 }
 
 impl AsyncSerial {
@@ -400,8 +400,8 @@ impl AsyncSerial {
             rx_intr_enabled: AtomicBool::new(false),
             tx_intr_enabled: AtomicBool::new(false),
             prev_cts: AtomicBool::new(true),
-            read_waker: Mutex::new(None),
-            write_waker: Mutex::new(None),
+            read_wakers: Mutex::new(VecDeque::new()),
+            write_wakers: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -625,15 +625,8 @@ impl AsyncSerial {
                     }
                     self.rx_fifo_count.store(rx_fifo_count, Release);
                     self.rx_count.fetch_add(rx_count, Relaxed);
-                    if let Some(waker) = self.read_waker.try_lock() {
-                        if waker.is_some() {
-                            // println!("*** [{}] r wake ****", self.addr_no());
-                            // waker.take().unwrap().wake();
-                            // push_trace(ASYNC_READ_WAKE);
-                            waker.as_ref().unwrap().wake_by_ref();
-                        } else {
-                            // println!("&&& [{}] no r waker &&&&", self.addr_no());
-                        }
+                    if let Some(waker) = self.read_wakers.lock().pop_front() {
+                            waker.wake()
                     } else {
                         // println!("cannot lock reader waker");
                     }
@@ -678,15 +671,8 @@ impl AsyncSerial {
                         self.prev_cts.store(cts, Relaxed);
                         self.toggle_threi();
                         // println!("dcts && cts");
-                        if let Some(waker) = self.write_waker.try_lock() {
-                            if waker.is_some() {
-                                // println!("%%% [{}] w wake %%%%", self.addr_no());
-                                // waker.take().unwrap().wake();
-                                // push_trace(ASYNC_WRITE_WAKE);
-                                waker.as_ref().unwrap().wake_by_ref();
-                            } else {
-                                // println!("___ [{}] no w waker ____", self.addr_no());
-                            }
+                        if let Some(waker) = self.write_wakers.lock().pop_front() {
+                            waker.wake()
                         } else {
                             // println!("cannot lock writer waker");
                         }
@@ -710,7 +696,7 @@ impl AsyncSerial {
 
     async fn register_read(&self) {
         let raw_waker = GetWakerFuture.await;
-        self.read_waker.lock().replace(raw_waker);
+        self.read_wakers.lock().push_back(raw_waker);
     }
 
     pub async fn read(self: Arc<Self>, buf: &mut [u8]) {
@@ -725,7 +711,7 @@ impl AsyncSerial {
 
     async fn register_write(&self) {
         let raw_waker = GetWakerFuture.await;
-        self.write_waker.lock().replace(raw_waker);
+        self.write_wakers.lock().push_back(raw_waker);
     }
 
     pub async fn write(self: Arc<Self>, buf: &[u8]) {
@@ -739,11 +725,11 @@ impl AsyncSerial {
     }
 
     pub fn remove_read(&self) {
-        self.read_waker.lock().take();
+        // self.read_wakers.lock().pop_front();
     }
 
     pub fn remove_write(&self) {
-        self.write_waker.lock().take();
+        // self.write_wakers.lock().pop_front();
     }
 }
 

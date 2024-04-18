@@ -10,5 +10,6 @@ qemu-16550-pac = { git = "https://github.com/BITcyman/qemu-16550-pac"}
 embedded-hal = "=1.0.0-alpha.4"
 heapless = "0.7.5"
 spin = { version = "0.9", features = ["use_ticket_mutex"] }
-
+crossbeam = { version = "0.8", default-features = false, features = ["alloc"] }
+log = "0.4"
 nb = "1.0.0"
