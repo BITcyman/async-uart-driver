@@ -9,6 +9,7 @@ use alloc::sync::Arc;
 
 use crossbeam::atomic::AtomicCell;
 
+use crate::serials::AsyncSerial;
 use crate::waker::from_task;
 
 /// 
@@ -20,6 +21,12 @@ pub enum TaskState {
     Running = 1 << 1,
     ///
     Pending = 1 << 2,
+}
+
+#[repr(u32)]
+pub enum TaskIOType {
+    Read = 1 << 0,
+    Write = 1 << 1,
 }
 
 /// The pointer of 'Task'
@@ -55,8 +62,19 @@ impl TaskRef {
             match future.as_mut().poll(&mut cx) {
                 Poll::Ready(res) => Poll::Ready(res),
                 Poll::Pending => {
-                    if task.state.load(core::sync::atomic::Ordering::Relaxed) == TaskState::Ready as u32{
-                        task.state.store(TaskState::Pending as u32, core::sync::atomic::Ordering::Relaxed);
+                    task.state.store(TaskState::Pending as u32, core::sync::atomic::Ordering::Relaxed);
+                    match task.iotype.load(core::sync::atomic::Ordering::Relaxed) {
+                        1 => {
+                            // TaskIOType::Read
+                            task.driver.register_readwaker(waker);
+                        },
+                        2 => {
+                            // TaskIOType::Write
+                            task.driver.register_writewaker(waker);
+                        },
+                        _ => {
+                            log::debug!("Error task iotype")
+                        }
                     }
                     log::debug!("pending {}", task.state.load(core::sync::atomic::Ordering::Relaxed));
                     Poll::Pending
@@ -68,21 +86,28 @@ impl TaskRef {
 
 
 pub struct Task {
-
     /// detail value shown in 'TaskRef'
     pub(crate) state: AtomicU32,
     /// The task future
     pub fut: AtomicCell<Pin<Box<dyn Future<Output = i32> + 'static + Send + Sync>>>,
+    /// driver
+    pub driver: Arc<AsyncSerial>,
+    /// IO Type
+    pub iotype: AtomicU32,
 }
 
 impl Task {
     /// Create a new Task 
     pub fn new(
-        fut: Pin<Box<dyn Future<Output = i32> + 'static + Send + Sync>>
+        fut: Pin<Box<dyn Future<Output = i32> + 'static + Send + Sync>>,
+        driver: Arc<AsyncSerial>,
+        iotype: TaskIOType,
     ) -> TaskRef {
         let task = Arc::new(Self{
             state: AtomicU32::new(TaskState::Ready as u32),
             fut: AtomicCell::new(fut),
+            driver,
+            iotype: AtomicU32::new(iotype as u32)
         });
         task.as_ref()
     }
@@ -104,7 +129,17 @@ impl Task {
 pub fn wake_task(task_ref: TaskRef) {
     unsafe {
         let raw_ptr = task_ref.as_task_raw_ptr();
-        (*raw_ptr).state.store(TaskState::Ready as u32, core::sync::atomic::Ordering::Relaxed);
+        (*raw_ptr).state.store(TaskState::Running as u32, core::sync::atomic::Ordering::Relaxed);
         log::debug!("wake_task {}", (*raw_ptr).state.load(core::sync::atomic::Ordering::Relaxed));
+        let iotype = (*raw_ptr).iotype.load( core::sync::atomic::Ordering::Relaxed);
+        // 模拟放到执行器中执行
+        match task_ref.poll() {
+            Poll::Ready(a) => {
+                log::debug!("{} task finished {}",iotype, a)
+            },
+            Poll::Pending => {
+                log::debug!("{} task still pending", iotype)
+            }
+        }
     }
 }

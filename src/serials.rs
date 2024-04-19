@@ -1,17 +1,22 @@
 use alloc::collections::VecDeque;
-use alloc::sync::{Arc,};
+use alloc::sync::Arc;
+use alloc::boxed::Box;
 use core::{convert::Infallible, pin::Pin};
 use core::sync::atomic::{AtomicIsize, AtomicUsize, AtomicBool};
 use core::sync::atomic::Ordering::Relaxed;
 use core::future::Future;
 use core::task::{Context, Poll, Waker};
 
+
+
 use embedded_hal::serial::{Read, Write};
 
 use qemu_16550_pac::uart as uart;
 use heapless::spsc;
 use spin::Mutex;
-use crate::future::GetWakerFuture;
+
+use crate::task::Task;
+use crate::waker::from_task;
 
 pub const FIFO_DEPTH: usize = 16;
 pub const RTS_PULSE_WIDTH: usize = 8;
@@ -281,7 +286,7 @@ impl BufferedSerial {
                         self.toggle_threi();
                         self.start_tx();
                     } else {
-                        let block = self.hardware();
+                        let _block = self.hardware();
                         // println!(
                         //     "[USER SERIAL] EDSSI, MSR: {:#x}, LSR: {:#x}, IER: {:#x}",
                         //     block.msr.read().bits(),
@@ -625,10 +630,10 @@ impl AsyncSerial {
                     }
                     self.rx_fifo_count.store(rx_fifo_count, Release);
                     self.rx_count.fetch_add(rx_count, Relaxed);
+                    
+
                     if let Some(waker) = self.read_wakers.lock().pop_front() {
                             waker.wake()
-                    } else {
-                        // println!("cannot lock reader waker");
                     }
                 }
                 Iid::ThrEmpty => {
@@ -673,8 +678,6 @@ impl AsyncSerial {
                         // println!("dcts && cts");
                         if let Some(waker) = self.write_wakers.lock().pop_front() {
                             waker.wake()
-                        } else {
-                            // println!("cannot lock writer waker");
                         }
                     } else {
                         // let block = self.hardware();
@@ -694,42 +697,62 @@ impl AsyncSerial {
         }
     }
 
-    async fn register_read(&self) {
-        let raw_waker = GetWakerFuture.await;
-        self.read_wakers.lock().push_back(raw_waker);
-    }
-
-    pub async fn read(self: Arc<Self>, buf: &mut [u8]) {
+    pub async fn read(self: Arc<Self>, buf: &'static mut [u8]) {
         let future = SerialReadFuture {
             buf,
             read_len: 0,
             driver: self.clone(),
         };
-        self.register_read().await;
-        future.await;
+        let task = Task::new(Box::pin(future), self.clone(), crate::task::TaskIOType::Read);
+        match task.clone().poll() {
+            Poll::Ready(_) => {
+                log::debug!("first read successfully");
+                drop(task)
+            },
+            Poll::Pending=> {
+                self.read_wakers.lock().push_back(
+                    unsafe { from_task(task) }
+                )
+            }
+        }
     }
 
-    async fn register_write(&self) {
-        let raw_waker = GetWakerFuture.await;
-        self.write_wakers.lock().push_back(raw_waker);
-    }
-
-    pub async fn write(self: Arc<Self>, buf: &[u8]) {
+    pub async fn write(self: Arc<Self>, buf: &'static [u8]) {
         let future = SerialWriteFuture {
             buf,
             write_len: 0,
             driver: self.clone(),
         };
-        self.register_write().await;
-        future.await;
+        let task = Task::new(Box::pin(future), self.clone(), crate::task::TaskIOType::Write);
+        match task.clone().poll(){
+            Poll::Ready(_) => {
+                log::debug!("first write successfully");
+                drop(task)
+            },
+            Poll::Pending=> {
+                self.write_wakers.lock().push_back(
+                    unsafe { from_task(task) }
+                )
+            }
+        }
     }
 
+    pub fn register_readwaker(&self, read_waker: Waker) {
+        self.read_wakers.lock().push_back(read_waker)
+    }
+
+    pub fn register_writewaker(&self, write_waker: Waker) {
+        self.write_wakers.lock().push_back(write_waker)
+    }
+
+    /// remove all read wakers
     pub fn remove_read(&self) {
-        // self.read_wakers.lock().pop_front();
+        self.read_wakers.lock().clear();
     }
 
+    /// remove all write wakers
     pub fn remove_write(&self) {
-        // self.write_wakers.lock().pop_front();
+        self.write_wakers.lock().clear();
     }
 }
 
@@ -754,8 +777,12 @@ struct SerialReadFuture<'a> {
     driver: Arc<AsyncSerial>,
 }
 
+unsafe impl Send for SerialReadFuture<'_> {}
+unsafe impl Sync for SerialReadFuture<'_> {}
+
+
 impl Future for SerialReadFuture<'_> {
-    type Output = ();
+    type Output = i32;
 
     fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         // println!("read poll");
@@ -768,7 +795,7 @@ impl Future for SerialReadFuture<'_> {
             } else {
                 // println!("### [{:x}] r poll fin ####", self.driver.addr_no());
                 // push_trace(ASYNC_READ_POLL);
-                return Poll::Ready(());
+                return Poll::Ready(self.read_len as i32);
             }
         }
 
@@ -788,8 +815,11 @@ struct SerialWriteFuture<'a> {
     driver: Arc<AsyncSerial>,
 }
 
+unsafe impl Send for SerialWriteFuture<'_> {}
+unsafe impl Sync for SerialWriteFuture<'_> {}
+
 impl Future for SerialWriteFuture<'_> {
-    type Output = ();
+    type Output = i32;
 
     fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         // println!("write poll");
@@ -806,7 +836,7 @@ impl Future for SerialWriteFuture<'_> {
             } else {
                 // println!("--- [{:x}] w poll fin ----", self.driver.addr_no());
                 // push_trace(ASYNC_WRITE_POLL);
-                return Poll::Ready(());
+                return Poll::Ready(self.write_len as i32);
             }
         }
 
