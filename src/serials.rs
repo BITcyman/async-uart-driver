@@ -15,7 +15,7 @@ use qemu_16550_pac::uart as uart;
 use heapless::spsc;
 use spin::Mutex;
 
-use crate::task::Task;
+use crate::task::{Executor, Task};
 use crate::waker::from_task;
 
 pub const FIFO_DEPTH: usize = 16;
@@ -379,6 +379,7 @@ pub struct AsyncSerial {
     prev_cts: AtomicBool,
     read_wakers: Mutex<VecDeque<Waker>>,
     write_wakers: Mutex<VecDeque<Waker>>,
+    executor: Executor,
 }
 
 impl AsyncSerial {
@@ -407,6 +408,7 @@ impl AsyncSerial {
             prev_cts: AtomicBool::new(true),
             read_wakers: Mutex::new(VecDeque::new()),
             write_wakers: Mutex::new(VecDeque::new()),
+            executor: Executor::default(),
         }
     }
 
@@ -631,10 +633,9 @@ impl AsyncSerial {
                     self.rx_fifo_count.store(rx_fifo_count, Release);
                     self.rx_count.fetch_add(rx_count, Relaxed);
                     
+                    self.executor.run_until_idle();
+                    
 
-                    if let Some(waker) = self.read_wakers.lock().pop_front() {
-                            waker.wake()
-                    }
                 }
                 Iid::ThrEmpty => {
                     // println!("[SERIAL] Transmitter Holding Register Empty");
@@ -676,9 +677,8 @@ impl AsyncSerial {
                         self.prev_cts.store(cts, Relaxed);
                         self.toggle_threi();
                         // println!("dcts && cts");
-                        if let Some(waker) = self.write_wakers.lock().pop_front() {
-                            waker.wake()
-                        }
+                        self.executor.run_until_idle();
+
                     } else {
                         // let block = self.hardware();
                         // println!(
@@ -710,9 +710,11 @@ impl AsyncSerial {
                 drop(task)
             },
             Poll::Pending=> {
+                
                 self.read_wakers.lock().push_back(
-                    unsafe { from_task(task) }
-                )
+                    unsafe { from_task(task.clone()) }
+                );
+                self.executor.push_task(Task::from_ref(task))
             }
         }
     }
@@ -731,8 +733,9 @@ impl AsyncSerial {
             },
             Poll::Pending=> {
                 self.write_wakers.lock().push_back(
-                    unsafe { from_task(task) }
-                )
+                    unsafe { from_task(task.clone()) }
+                );
+                self.executor.push_task(Task::from_ref(task))
             }
         }
     }
