@@ -68,14 +68,16 @@ impl TaskRef {
                     match task.iotype.load(core::sync::atomic::Ordering::Relaxed) {
                         1 => {
                             // TaskIOType::Read
+                            log::debug!("read task");
                             task.driver.register_readwaker(waker);
                         },
                         2 => {
                             // TaskIOType::Write
+                            log::debug!("write task");
                             task.driver.register_writewaker(waker);
                         },
                         _ => {
-                            log::debug!("Error task iotype")
+                            log::debug!("Error task iotype {}", task.iotype.load(core::sync::atomic::Ordering::Relaxed))
                         }
                     }
                     log::debug!("pending {}", task.state.load(core::sync::atomic::Ordering::Relaxed));
@@ -115,7 +117,7 @@ impl Task {
     }
 
     /// 
-    fn as_ref(self: Arc<Self>) -> TaskRef {
+    pub fn as_ref(self: Arc<Self>) -> TaskRef {
         unsafe { TaskRef::from_ptr(Arc::into_raw(self))}
     }
 
@@ -134,7 +136,7 @@ pub fn wake_task(task_ref: TaskRef) {
         let raw_ptr = task_ref.as_task_raw_ptr();
         (*raw_ptr).state.store(TaskState::Ready as u32, core::sync::atomic::Ordering::Relaxed);
         log::debug!("wake_task, the tasks' state is {} (Ready == 1)", (*raw_ptr).state.load(core::sync::atomic::Ordering::Relaxed));
-        let _iotype = (*raw_ptr).iotype.load( core::sync::atomic::Ordering::Relaxed);
+        // let _iotype = (*raw_ptr).iotype.load( core::sync::atomic::Ordering::Relaxed);
     }
 }
 
