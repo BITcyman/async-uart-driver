@@ -608,7 +608,7 @@ impl AsyncSerial {
             self.intr_count.fetch_add(1, Relaxed);
             match int_type {
                 Iid::ReceivedDataAvailable | Iid::CharacterTimeout => {
-                    log::debug!("[SERIAL] Received data available");
+                    log::debug!("[SERIAL {:x}] Received data available", self.base_address);
                     self.rx_intr_count.fetch_add(1, Relaxed);
                     let mut rx_count = 0;
                     let mut rx_fifo_count = self.rx_fifo_count.load(Acquire);
@@ -635,23 +635,23 @@ impl AsyncSerial {
                     self.rx_fifo_count.store(rx_fifo_count, Release);
                     self.rx_count.fetch_add(rx_count, Relaxed);
                     
-                    log::debug!("before wake");
+                    // log::debug!("before wake");
                     while let Some(waker) = self.read_wakers.lock().pop_front(){
                         log::debug!("wake read task");
                         waker.wake()
                     };
-                    log::debug!("after wake");
-                    log::debug!("executor::run_until_idle");
+                    // log::debug!("after wake");
+                    // log::debug!("executor::run_until_idle");
                     self.executor.run_until_idle();
                     
                 }
                 Iid::ThrEmpty => {
-                    log::debug!("[SERIAL] Transmitter Holding Register Empty");
+                    log::debug!("[SERIAL {:x}] Transmitter Holding Register Empty", self.base_address);
                     self.tx_intr_count.fetch_add(1, Relaxed);
                     self.start_tx();
                 }
                 Iid::ReceiverLineStatus => {
-                    log::debug!("[SERIAL] ReceiverLineStatus");
+                    log::debug!("[SERIAL {:x}] ReceiverLineStatus", self.base_address);
                     let block = self.hardware();
                     let lsr = block.lsr().read();
                     // if lsr.bi().bit_is_set() {
@@ -672,7 +672,7 @@ impl AsyncSerial {
                     }
                 }
                 Iid::ModemStatus => {
-                    log::debug!("[SERIAL] ModemStatus");
+                    log::debug!("[SERIAL{:x}] ModemStatus", self.base_address);
                     if self.dcts() {
                         let cts = self.cts();
                         if cts == self.prev_cts.load(Relaxed) {
@@ -718,8 +718,14 @@ impl AsyncSerial {
             driver: self.clone(),
         };
         // 注册
-        let task = Task::new(Box::pin(future), self.clone(), crate::task::TaskIOType::Read);
-        self.register_readwaker( unsafe { from_task(task.clone())} );
+        let task = Task::new(
+            Box::pin(future),
+            self.clone(), 
+            crate::task::TaskIOType::Read
+        );
+        self.register_readwaker(
+            unsafe { from_task(task.clone())}
+        );
         self.executor.push_task(Task::from_ref(task));
     }
 
@@ -733,7 +739,8 @@ impl AsyncSerial {
         self.register_writewaker(
             unsafe { from_task(task.clone()) }
         );
-        self.executor.push_task(Task::from_ref(task))
+        self.executor.push_task(Task::from_ref(task));
+        self.toggle_threi();
     }
 
     pub fn register_readwaker(&self, read_waker: Waker) {
@@ -753,6 +760,11 @@ impl AsyncSerial {
     pub fn remove_write(&self) {
         self.write_wakers.lock().clear();
     }
+
+    pub fn run_exec(&self){
+        self.executor.run_until_idle();
+    }
+
 }
 
 impl Drop for AsyncSerial {

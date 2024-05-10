@@ -80,7 +80,7 @@ impl TaskRef {
                             log::debug!("Error task iotype {}", task.iotype.load(core::sync::atomic::Ordering::Relaxed))
                         }
                     }
-                    log::debug!("pending {}", task.state.load(core::sync::atomic::Ordering::Relaxed));
+                    // log::debug!("pending {}", task.state.load(core::sync::atomic::Ordering::Relaxed));
                     Poll::Pending
                 },
             }
@@ -135,7 +135,7 @@ pub fn wake_task(task_ref: TaskRef) {
         // 修改 Task 状态，等到接收到串口中断时，执行器会执行里面现有的就绪 Future
         let raw_ptr = task_ref.as_task_raw_ptr();
         (*raw_ptr).state.store(TaskState::Ready as u32, core::sync::atomic::Ordering::Relaxed);
-        log::debug!("wake_task, the tasks' state is {} (Ready == 1)", (*raw_ptr).state.load(core::sync::atomic::Ordering::Relaxed));
+        // log::debug!("wake_task, the tasks' state is {} (Ready == 1)", (*raw_ptr).state.load(core::sync::atomic::Ordering::Relaxed));
         // let _iotype = (*raw_ptr).iotype.load( core::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -161,7 +161,9 @@ impl Executor {
 
     pub fn pop_runnable_task(&self) -> Option<Arc<Task>> {
         let mut tasks = self.tasks.lock();
-        for _ in 0..tasks.len() {
+        log::debug!("tasks' len is {}", tasks.len());
+        for i in 0..tasks.len() {
+            log::debug!("now {}th task",i);
             let task = tasks.pop_front().unwrap();
             let tstate = task.state.load(core::sync::atomic::Ordering::Relaxed);
             if tstate == TaskState::Ready as u32 {
